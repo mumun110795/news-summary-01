@@ -12,6 +12,12 @@ every run produces identical output. Before writing, the program
 checks the summary against the competition gate (UTF-8 text of 1 to
 2,000 Unicode characters, not only whitespace) and fails loudly
 instead of emitting an invalid entry.
+
+The write itself is atomic: the bytes go to a temporary file in the
+same directory, are flushed to disk, and are then moved over
+entry.txt with os.replace, so an interrupted run can never leave a
+truncated entry.txt behind. The temporary file is removed again if
+anything fails before the move.
 """
 
 import os
@@ -32,10 +38,25 @@ def read_summary() -> bytes:
     return data
 
 
+def write_entry(output_dir: Path, data: bytes) -> None:
+    """Write data to entry.txt in output_dir, atomically."""
+    target = output_dir / "entry.txt"
+    temporary = output_dir / "entry.txt.tmp"
+    try:
+        with temporary.open("wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
 def main() -> int:
     output_dir = Path(os.environ.get("MAKEFUN_OUTPUT_DIR", "/output"))
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "entry.txt").write_bytes(read_summary())
+    write_entry(output_dir, read_summary())
     return 0
 
 
